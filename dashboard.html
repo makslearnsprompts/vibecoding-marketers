@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ROMI Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1c2130;
+    --border: #252b38;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #6aa9ff;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #facc15;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .kpi .value { font-size: 22px; font-weight: 600; margin-top: 6px; }
+  .kpi .sub-v { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .filters label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+  .filters select, .filters input {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none;
+  }
+  .filters input { min-width: 220px; }
+  .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px;
+          padding: 5px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .chip.active { color: var(--text); border-color: var(--accent); }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; }
+  canvas { max-height: 280px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { position: sticky; top: 0; background: var(--panel-2); text-align: right;
+             padding: 9px 10px; border-bottom: 1px solid var(--border); font-weight: 600;
+             color: var(--muted); cursor: pointer; user-select: none; white-space: nowrap; }
+  thead th.left { text-align: left; }
+  thead th.sorted::after { content: " ▾"; color: var(--accent); }
+  thead th.sorted.asc::after { content: " ▴"; }
+  tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+  tbody td.left { text-align: left; }
+  tbody tr:hover { background: rgba(106,169,255,0.06); }
+
+  .pos { color: var(--green); font-weight: 600; }
+  .neg { color: var(--red); font-weight: 600; }
+  .zero { color: var(--muted); }
+
+  .channel-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+
+  .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: auto; max-height: 620px; }
+
+  @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(3, 1fr); } .grid { grid-template-columns: 1fr; } }
+  @media (max-width: 600px)  { .kpis { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ROMI Dashboard</h1>
+  <div class="sub">Ефективність маркетингових каналів та кампаній</div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="filters">
+    <label>Канал:</label>
+    <div id="channelChips" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+    <span style="flex:1"></span>
+    <input id="search" placeholder="Пошук по кампанії…" />
+    <select id="sortSel">
+      <option value="ROMI">Сортувати: ROMI</option>
+      <option value="Spend">Spend</option>
+      <option value="Installs">Installs</option>
+      <option value="CPI">CPI</option>
+      <option value="CPA">CPA</option>
+      <option value="CR3">CR3</option>
+    </select>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>ROMI по кампаніях</h3>
+      <canvas id="romiChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Витрати по каналах</h3>
+      <canvas id="spendChart"></canvas>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="dataTable">
+      <thead>
+        <tr id="theadRow"></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const RAW = `Channel,Campaign,Spend,Impressions,CPM,clicks,CTR,CPC,Installs,CI,CPI,Activations,CT,Cancels_10th_fl,CPA,CPA_account,Purchase_1,CR1,CR2,CR3,pLTV,ROMI
+Facebook,Brand Awareness,12500,1785000,7.0,24990,1.40%,0.5,4498,18.00%,2.78,3148,70.00%,629,28.41,4.96,440,9.78%,13.98%,17.47%,38.5,35.52%
+Facebook,Retargeting,8200,936000,8.76,14976,1.60%,0.55,3144,21.00%,2.61,2358,75.00%,353,15.8,4.09,519,16.51%,22.01%,25.89%,42.1,166.46%
+Facebook,Lookalike 1%,15800,2257000,7.0,28438,1.26%,0.56,4834,17.00%,3.27,3383,70.00%,845,42.36,6.23,373,7.72%,11.03%,14.70%,35.2,-16.90%
+Facebook,Broad Targeting,9400,1567000,6.0,21938,1.40%,0.43,3071,14.00%,3.06,2149,70.00%,537,44.98,5.83,209,6.81%,9.73%,12.97%,31.4,-30.19%
+Google Ads,Search Brand,5600,280000,20.0,11200,4.00%,0.5,3024,27.00%,1.85,2419,80.00%,362,11.02,2.72,508,16.80%,21.00%,24.70%,45.6,313.66%
+Google Ads,Search Generic,18300,1220000,15.0,15860,1.30%,1.15,3489,22.00%,5.25,2791,80.00%,558,43.68,8.2,419,12.01%,15.01%,18.76%,39.8,-8.87%
+Google Ads,UAC Install,22000,4400000,5.0,48400,1.10%,0.45,7937,16.40%,2.77,5555,70.00%,1111,33.03,4.95,666,8.39%,11.99%,14.99%,33.1,0.20%
+Google Ads,YouTube Ads,14700,2100000,7.0,18900,0.90%,0.78,3213,17.00%,4.58,2249,70.00%,562,72.77,8.71,202,6.29%,8.98%,11.97%,29.8,-59.05%
+TikTok,TopView,25000,5000000,5.0,55000,1.10%,0.45,8250,15.00%,3.03,5775,70.00%,1155,49.21,5.41,508,6.16%,8.80%,11.00%,34.5,-29.90%
+TikTok,In-Feed Standard,11600,2320000,5.0,27840,1.20%,0.42,4454,16.00%,2.6,3117,70.00%,623,35.8,4.65,324,7.27%,10.39%,12.99%,36.7,2.51%
+TikTok,Spark Ads,7800,1300000,6.0,16900,1.30%,0.46,2873,17.00%,2.71,2154,75.00%,430,25.16,4.52,310,10.79%,14.39%,17.98%,41.3,64.14%
+TikTok,Retargeting,4300,614000,7.0,9210,1.50%,0.47,1657,18.00%,2.6,1325,80.00%,198,13.19,3.82,326,19.67%,24.60%,28.93%,44.8,239.65%
+Apple Search Ads,Brand,3200,107000,29.91,5350,5.00%,0.6,2033,38.00%,1.57,1728,85.00%,259,8.72,2.18,367,18.05%,21.24%,24.98%,48.2,452.79%
+Apple Search Ads,Generic,9800,490000,20.0,7840,1.60%,1.25,1960,25.00%,5.0,1568,80.00%,313,49.0,7.81,200,10.20%,12.76%,15.94%,40.5,-17.35%
+Apple Search Ads,Competitor,6100,305000,20.0,3660,1.20%,1.67,841,23.00%,7.25,672,80.00%,134,76.25,11.34,80,9.51%,11.90%,14.87%,37.9,-50.30%
+Snapchat,Story Ads,8900,2225000,4.0,24475,1.10%,0.36,3916,16.00%,2.27,2741,70.00%,548,33.84,4.06,263,6.72%,9.60%,11.99%,32.8,-3.07%
+Snapchat,Collection Ads,5500,1100000,5.0,13200,1.20%,0.42,1980,15.00%,2.78,1386,70.00%,277,38.19,4.96,144,7.27%,10.39%,12.98%,34.1,-10.72%
+Unity Ads,Rewarded Video,7200,3600000,2.0,28800,0.80%,0.25,5760,20.00%,1.25,3456,60.00%,691,23.68,2.6,304,5.28%,8.80%,10.99%,28.5,20.33%
+Unity Ads,Interstitial,4800,2400000,2.0,16800,0.70%,0.29,3360,20.00%,1.43,2016,60.00%,403,27.12,2.98,177,5.27%,8.78%,10.97%,26.3,-3.02%
+ironSource,Offerwall,3100,1550000,2.0,12400,0.80%,0.25,2480,20.00%,1.25,1488,60.00%,297,21.83,2.6,142,5.73%,9.54%,11.92%,27.1,24.14%
+Influencer,Instagram Macro,10500,840000,12.5,10080,1.20%,1.04,1814,18.00%,5.79,1360,75.00%,272,57.07,9.65,184,10.14%,13.53%,16.91%,43.6,-23.60%
+Influencer,YouTube Mid-tier,7400,493000,15.01,5916,1.20%,1.25,1005,17.00%,7.36,804,80.00%,160,64.35,11.49,115,11.44%,14.30%,17.86%,46.2,-28.20%
+Influencer,TikTok Micro,3800,760000,5.0,9880,1.30%,0.38,1679,17.00%,2.26,1259,75.00%,251,20.99,3.77,181,10.78%,14.38%,17.96%,40.8,94.34%`;
+
+const CHANNEL_COLORS = {
+  'Facebook': '#4267B2',
+  'Google Ads': '#EA4335',
+  'TikTok': '#25F4EE',
+  'Apple Search Ads': '#A2AAAD',
+  'Snapchat': '#FFFC00',
+  'Unity Ads': '#222C37',
+  'ironSource': '#7C3AED',
+  'Influencer': '#F472B6',
+};
+
+// --- CSV parse ---
+const lines = RAW.trim().split('\n');
+const headers = lines[0].split(',');
+const rows = lines.slice(1).map(line => {
+  const parts = line.split(',');
+  const obj = {};
+  headers.forEach((h, i) => obj[h] = parts[i]);
+  return obj;
+});
+
+const parsePct = v => v == null ? 0 : parseFloat(String(v).replace('%',''));
+const parseNum = v => v == null ? 0 : parseFloat(v);
+rows.forEach(r => {
+  r._Spend = parseNum(r.Spend);
+  r._Impressions = parseNum(r.Impressions);
+  r._CPM = parseNum(r.CPM);
+  r._clicks = parseNum(r.clicks);
+  r._CTR = parsePct(r.CTR);
+  r._CPC = parseNum(r.CPC);
+  r._Installs = parseNum(r.Installs);
+  r._CI = parsePct(r.CI);
+  r._CPI = parseNum(r.CPI);
+  r._Activations = parseNum(r.Activations);
+  r._CT = parsePct(r.CT);
+  r._CPA = parseNum(r.CPA);
+  r._CR3 = parsePct(r.CR3);
+  r._pLTV = parseNum(r.pLTV);
+  r._ROMI = parsePct(r.ROMI);
+  r._Purchase_1 = parseNum(r.Purchase_1);
+});
+
+const channels = [...new Set(rows.map(r => r.Channel))];
+
+// --- State ---
+const state = {
+  channel: 'All',
+  search: '',
+  sortKey: '_ROMI',
+  sortDir: 'desc',
+};
+
+// --- Formatters ---
+const fmtMoney = n => '$' + Math.round(n).toLocaleString('en-US');
+const fmtInt = n => Math.round(n).toLocaleString('en-US');
+const fmtPct = n => (n >= 0 ? '' : '') + n.toFixed(2) + '%';
+
+// --- Filtering ---
+function filtered() {
+  return rows.filter(r =>
+    (state.channel === 'All' || r.Channel === state.channel) &&
+    (state.search === '' || r.Campaign.toLowerCase().includes(state.search.toLowerCase()) || r.Channel.toLowerCase().includes(state.search.toLowerCase()))
+  );
+}
+
+// --- KPIs ---
+function renderKpis() {
+  const d = filtered();
+  const spend = d.reduce((s, r) => s + r._Spend, 0);
+  const installs = d.reduce((s, r) => s + r._Installs, 0);
+  const activations = d.reduce((s, r) => s + r._Activations, 0);
+  const purchases = d.reduce((s, r) => s + r._Purchase_1, 0);
+  const avgCpi = installs ? spend / installs : 0;
+  // weighted ROMI by spend
+  const wRomi = spend ? d.reduce((s, r) => s + r._ROMI * r._Spend, 0) / spend : 0;
+  const kpis = [
+    { label: 'Витрати', value: fmtMoney(spend), sub: `${d.length} кампаній` },
+    { label: 'Installs', value: fmtInt(installs), sub: `CPI ${avgCpi.toFixed(2)}` },
+    { label: 'Активації', value: fmtInt(activations), sub: `CT ${installs ? (activations/installs*100).toFixed(1) : 0}%` },
+    { label: 'Покупки', value: fmtInt(purchases), sub: `CR3 ${installs ? (purchases/installs*100).toFixed(2) : 0}%` },
+    { label: 'Сер. ROMI (зв.)', value: fmtPct(wRomi), sub: 'зважений по Spend', cls: wRomi >= 0 ? 'pos' : 'neg' },
+    { label: 'Кращий ROMI', value: d.length ? fmtPct(Math.max(...d.map(r=>r._ROMI))) : '—',
+      sub: d.length ? d.reduce((a,b)=>a._ROMI>b._ROMI?a:b).Campaign : '' },
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(k =>
+    `<div class="kpi"><div class="label">${k.label}</div>
+      <div class="value ${k.cls||''}">${k.value}</div>
+      <div class="sub-v">${k.sub||''}</div></div>`
+  ).join('');
+}
+
+// --- Channel chips ---
+function renderChips() {
+  const el = document.getElementById('channelChips');
+  const items = ['All', ...channels];
+  el.innerHTML = items.map(c =>
+    `<span class="chip ${state.channel===c?'active':''}" data-ch="${c}">${c}</span>`
+  ).join('');
+  el.querySelectorAll('.chip').forEach(chip => {
+    chip.onclick = () => { state.channel = chip.dataset.ch; renderAll(); };
+  });
+}
+
+// --- Table ---
+const COLUMNS = [
+  { key: 'Channel', label: 'Канал', left: true },
+  { key: 'Campaign', label: 'Кампанія', left: true },
+  { key: '_Spend', label: 'Spend', fmt: fmtMoney },
+  { key: '_Impressions', label: 'Impr.', fmt: fmtInt },
+  { key: '_clicks', label: 'Clicks', fmt: fmtInt },
+  { key: '_CTR', label: 'CTR', fmt: v => v.toFixed(2) + '%' },
+  { key: '_CPC', label: 'CPC', fmt: v => '$' + v.toFixed(2) },
+  { key: '_Installs', label: 'Installs', fmt: fmtInt },
+  { key: '_CPI', label: 'CPI', fmt: v => '$' + v.toFixed(2) },
+  { key: '_CPA', label: 'CPA', fmt: v => '$' + v.toFixed(2) },
+  { key: '_CR3', label: 'CR3', fmt: v => v.toFixed(2) + '%' },
+  { key: '_pLTV', label: 'pLTV', fmt: v => '$' + v.toFixed(1) },
+  { key: '_ROMI', label: 'ROMI', fmt: fmtPct, color: true },
+];
+
+function renderTable() {
+  const thead = document.getElementById('theadRow');
+  thead.innerHTML = COLUMNS.map(c => {
+    const sorted = state.sortKey === c.key;
+    return `<th class="${c.left?'left':''} ${sorted?'sorted':''} ${sorted && state.sortDir==='asc'?'asc':''}" data-key="${c.key}">${c.label}</th>`;
+  }).join('');
+  thead.querySelectorAll('th').forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.key;
+      if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      else { state.sortKey = k; state.sortDir = 'desc'; }
+      renderTable();
+    };
+  });
+
+  const data = filtered().slice().sort((a, b) => {
+    const va = a[state.sortKey], vb = b[state.sortKey];
+    if (typeof va === 'string') return state.sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    return state.sortDir === 'asc' ? va - vb : vb - va;
+  });
+
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = data.map(r => {
+    return '<tr>' + COLUMNS.map(c => {
+      let v = r[c.key];
+      let cls = c.left ? 'left' : '';
+      if (c.color) {
+        cls += r._ROMI > 0 ? ' pos' : (r._ROMI < 0 ? ' neg' : ' zero');
+      }
+      let text = c.fmt ? c.fmt(v) : v;
+      if (c.key === 'Channel') {
+        const color = CHANNEL_COLORS[v] || '#888';
+        text = `<span class="channel-dot" style="background:${color}"></span>${v}`;
+      }
+      return `<td class="${cls}">${text}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+// --- Charts ---
+let romiChart, spendChart;
+function renderCharts() {
+  const d = filtered().slice().sort((a,b) => b._ROMI - a._ROMI);
+  const labels = d.map(r => r.Campaign);
+  const romiVals = d.map(r => r._ROMI);
+  const bgColors = d.map(r => r._ROMI >= 0 ? 'rgba(74,222,128,0.7)' : 'rgba(248,113,113,0.7)');
+
+  if (romiChart) romiChart.destroy();
+  romiChart = new Chart(document.getElementById('romiChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data: romiVals, backgroundColor: bgColors, borderRadius: 4 }] },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.parsed.x.toFixed(2)}%` } } },
+      scales: {
+        x: { ticks: { color: '#8b93a7', callback: v => v + '%' }, grid: { color: '#252b38' } },
+        y: { ticks: { color: '#e6e9ef', font: { size: 10 } }, grid: { display: false } }
+      }
+    }
+  });
+
+  // Spend by channel (pie)
+  const byCh = {};
+  filtered().forEach(r => byCh[r.Channel] = (byCh[r.Channel]||0) + r._Spend);
+  const chLabels = Object.keys(byCh);
+  const chVals = chLabels.map(c => byCh[c]);
+  const chColors = chLabels.map(c => CHANNEL_COLORS[c] || '#888');
+
+  if (spendChart) spendChart.destroy();
+  spendChart = new Chart(document.getElementById('spendChart'), {
+    type: 'doughnut',
+    data: { labels: chLabels, datasets: [{ data: chVals, backgroundColor: chColors, borderColor: '#161a22', borderWidth: 2 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { color: '#e6e9ef', font: { size: 11 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: ctx => `${ctx.label}: ${fmtMoney(ctx.parsed)}` } }
+      }
+    }
+  });
+}
+
+function renderAll() { renderKpis(); renderChips(); renderTable(); renderCharts(); }
+
+// --- Events ---
+document.getElementById('search').addEventListener('input', e => { state.search = e.target.value; renderAll(); });
+document.getElementById('sortSel').addEventListener('change', e => {
+  state.sortKey = '_' + e.target.value; state.sortDir = 'desc'; renderTable();
+});
+
+renderAll();
+</script>
+</body>
+</html>
